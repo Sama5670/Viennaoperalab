@@ -42,7 +42,7 @@ section { display: flex; flex-direction: column; gap: 12px; }
 .step h2 { font-size: 17px; font-weight: 600; margin: 0; }
 label { font-size: 14px; font-weight: 600; display: flex; flex-direction: column; gap: 5px; }
 label .opt { font-weight: 400; color: var(--ink-soft); }
-input[type=text], select, textarea { font: inherit; font-weight: 400; color: var(--navy); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; background: #fff; width: 100%; }
+input[type=text], select, textarea { font: inherit; font-weight: 400; font-size: 16px; color: var(--navy); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; background: #fff; width: 100%; }
 input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible, .chip:focus-within { outline: 2px solid var(--teal); outline-offset: 2px; }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 420px) { .row { grid-template-columns: 1fr; } }
@@ -412,7 +412,7 @@ footer { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--li
   let blobTimer = null, readyBlob = null;
   function scheduleBlob() {
     readyBlob = null; clearTimeout(blobTimer);
-    blobTimer = setTimeout(() => canvas.toBlob(b => { readyBlob = b; }, "image/jpeg", 0.92), 300);
+    blobTimer = setTimeout(() => canvas.toBlob(b => { readyBlob = b; }, "image/jpeg", 0.92), 600);
   }
 
   function buildCaption() {
@@ -424,7 +424,13 @@ footer { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--li
     parts.push(tags);
     return parts.join("\n\n");
   }
+  let refreshPending = false;
   function refresh() {
+    if (refreshPending) return;
+    refreshPending = true;
+    requestAnimationFrame(() => { refreshPending = false; refreshNow(); });
+  }
+  function refreshNow() {
     $("withLabel").style.display = moment().withField ? "" : "none";
     draw();
     if (!state.captionEdited) $("caption").value = buildCaption();
@@ -447,7 +453,17 @@ footer { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--li
   $("photo").addEventListener("change", e => {
     const f = e.target.files && e.target.files[0]; if (!f) return;
     const url = URL.createObjectURL(f); const im = new Image();
-    im.onload = () => { state.img = im; resetPos(); state.zoom = 1; $("zoom").value = 1; $("photoLabel").textContent = "Change photo"; refresh(); };
+    im.onload = () => {
+      const MAX = 2000, sc = Math.min(1, MAX / Math.max(im.naturalWidth, im.naturalHeight));
+      let src = im;
+      if (sc < 1) {
+        const c = document.createElement("canvas");
+        c.width = Math.round(im.naturalWidth * sc); c.height = Math.round(im.naturalHeight * sc);
+        c.getContext("2d").drawImage(im, 0, 0, c.width, c.height);
+        src = c; URL.revokeObjectURL(url);
+      }
+      state.img = src; resetPos(); state.zoom = 1; $("zoom").value = 1; $("photoLabel").textContent = "Change photo"; refresh();
+    };
     im.onerror = () => { $("status").textContent = "That file could not be opened. Please choose a JPG or PNG photo."; };
     im.src = url;
   });
