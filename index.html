@@ -34,7 +34,7 @@ h1 { font-family: var(--display); font-weight: 700; font-size: 30px; line-height
 .sub { color: var(--ink-soft); margin: 0; font-size: 15px; }
 .preview { display: flex; flex-direction: column; gap: 8px; }
 .canvas-box { background: var(--wash); border: 1px solid var(--line); border-radius: 6px; padding: 10px; display: flex; justify-content: center; }
-canvas#out { width: 100%; height: auto; max-height: 70vh; object-fit: contain; touch-action: none; cursor: grab; display: block; box-shadow: 0 1px 8px rgba(27,42,74,.12); }
+canvas#out { width: 100%; height: auto; max-height: 52vh; object-fit: contain; cursor: grab; display: block; box-shadow: 0 1px 8px rgba(27,42,74,.12); }
 .hint { font-size: 13px; color: var(--ink-soft); margin: 0; }
 section { display: flex; flex-direction: column; gap: 12px; }
 .step { display: flex; align-items: baseline; gap: 10px; }
@@ -83,7 +83,7 @@ footer { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--li
 
   <div class="preview">
     <div class="canvas-box"><canvas id="out" width="1080" height="1350" aria-label="Preview of your post"></canvas></div>
-    <p class="hint" id="dragHint">Drag the picture to move it. Use Zoom to make it bigger.</p>
+    <p class="hint" id="dragHint">Use Zoom and the two Move sliders below to frame your photo.</p>
   </div>
 
   <section>
@@ -94,6 +94,12 @@ footer { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--li
     </label>
     <label for="zoom">Zoom
       <input type="range" id="zoom" min="1" max="3" step="0.01" value="1">
+    </label>
+    <label for="posX">Move left / right
+      <input type="range" id="posX" min="-1" max="1" step="0.01" value="0">
+    </label>
+    <label for="posY">Move up / down
+      <input type="range" id="posY" min="-1" max="1" step="0.01" value="0">
     </label>
     <div class="chips" role="radiogroup" aria-label="Format">
       <label class="chip"><input type="radio" name="format" value="post" checked><span>Feed post 4:5</span></label>
@@ -207,7 +213,7 @@ footer { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--li
 
   const $ = id => document.getElementById(id);
   const canvas = $("out"), ctx = canvas.getContext("2d");
-  const state = { design: startDesign, img: null, zoom: 1, ox: 0, oy: 0, format: "post", moment: "part", lang: "en", captionEdited: false };
+  const state = { design: startDesign, px: 0, py: 0, maxX: 0, maxY: 0, img: null, zoom: 1, ox: 0, oy: 0, format: "post", moment: "part", lang: "en", captionEdited: false };
 
   $("handleText").textContent = VOL_HANDLE;
   $("handleText2").textContent = VOL_HANDLE;
@@ -261,8 +267,8 @@ footer { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--li
       const s = Math.max(w / im.width, h / im.height) * state.zoom;
       const dw = im.width * s, dh = im.height * s;
       const maxX = (dw - w) / 2, maxY = (dh - h) / 2;
-      state.ox = Math.max(-maxX, Math.min(maxX, state.ox));
-      state.oy = Math.max(-maxY, Math.min(maxY, state.oy));
+      state.maxX = maxX; state.maxY = maxY;
+      state.ox = state.px * maxX; state.oy = state.py * maxY;
       ctx.drawImage(im, x + (w - dw) / 2 + state.ox, y + (h - dh) / 2 + state.oy, dw, dh);
     } else {
       ctx.fillStyle = "#2a2833"; ctx.fillRect(x, y, w, h);
@@ -431,25 +437,32 @@ footer { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--li
   $("caption").addEventListener("input", () => { state.captionEdited = true; });
   document.querySelectorAll('input[name=moment]').forEach(r => r.addEventListener("change", e => { state.moment = e.target.value; state.captionEdited = false; refresh(); }));
   document.querySelectorAll('input[name=design]').forEach(r => { r.checked = r.value === state.design; r.addEventListener("change", e => { state.design = e.target.value; refresh(); }); });
-  document.querySelectorAll('input[name=format]').forEach(r => r.addEventListener("change", e => { state.format = e.target.value; state.ox = state.oy = 0; refresh(); }));
+  document.querySelectorAll('input[name=format]').forEach(r => r.addEventListener("change", e => { state.format = e.target.value; resetPos(); refresh(); }));
   document.querySelectorAll('input[name=lang]').forEach(r => r.addEventListener("change", e => { state.lang = e.target.value; state.captionEdited = false; refresh(); }));
   $("zoom").addEventListener("input", e => { state.zoom = parseFloat(e.target.value); refresh(); });
+  function resetPos() { state.px = 0; state.py = 0; $("posX").value = 0; $("posY").value = 0; }
+  $("posX").addEventListener("input", e => { state.px = parseFloat(e.target.value); refresh(); });
+  $("posY").addEventListener("input", e => { state.py = parseFloat(e.target.value); refresh(); });
 
   $("photo").addEventListener("change", e => {
     const f = e.target.files && e.target.files[0]; if (!f) return;
     const url = URL.createObjectURL(f); const im = new Image();
-    im.onload = () => { state.img = im; state.ox = state.oy = 0; state.zoom = 1; $("zoom").value = 1; $("photoLabel").textContent = "Change photo"; refresh(); };
+    im.onload = () => { state.img = im; resetPos(); state.zoom = 1; $("zoom").value = 1; $("photoLabel").textContent = "Change photo"; refresh(); };
     im.onerror = () => { $("status").textContent = "That file could not be opened. Please choose a JPG or PNG photo."; };
     im.src = url;
   });
 
   // drag to reposition
   let drag = null;
-  canvas.addEventListener("pointerdown", e => { if (!state.img) return; drag = { x: e.clientX, y: e.clientY, ox: state.ox, oy: state.oy }; canvas.setPointerCapture(e.pointerId); });
+  // mouse drag on computers only; on phones a finger on the picture scrolls the page as normal
+  canvas.addEventListener("pointerdown", e => { if (!state.img || e.pointerType === "touch") return; drag = { x: e.clientX, y: e.clientY, px: state.px, py: state.py }; canvas.setPointerCapture(e.pointerId); });
   canvas.addEventListener("pointermove", e => {
     if (!drag) return;
     const k = canvas.width / canvas.getBoundingClientRect().width;
-    state.ox = drag.ox + (e.clientX - drag.x) * k; state.oy = drag.oy + (e.clientY - drag.y) * k; draw();
+    const clamp = v => Math.max(-1, Math.min(1, v));
+    state.px = state.maxX > 0 ? clamp(drag.px + (e.clientX - drag.x) * k / state.maxX) : 0;
+    state.py = state.maxY > 0 ? clamp(drag.py + (e.clientY - drag.y) * k / state.maxY) : 0;
+    $("posX").value = state.px; $("posY").value = state.py; draw();
   });
   const endDrag = () => { if (drag) { drag = null; $("saveImg").style.display = "none"; } };
   canvas.addEventListener("pointerup", endDrag); canvas.addEventListener("pointercancel", endDrag);
