@@ -147,6 +147,7 @@ footer { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--li
     <label for="caption">Caption <span class="opt">(edit as you like)</span>
       <textarea id="caption"></textarea>
     </label>
+    <button class="secondary" id="resetCaptionBtn" type="button" hidden>Use suggested caption</button>
     <div class="btns">
       <button class="primary" id="shareBtn" type="button" hidden>Share to Instagram</button>
       <button class="secondary" id="saveBtn" type="button">Save image</button>
@@ -235,10 +236,28 @@ footer { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--li
     const words = text.split(/\s+/).filter(Boolean); const lines = []; let cur = "";
     for (const w of words) {
       const t = cur ? cur + " " + w : w;
-      if (ctx.measureText(t).width > maxW && cur) { lines.push(cur); cur = w; } else cur = t;
+      if (ctx.measureText(t).width <= maxW) { cur = t; continue; }
+      if (cur) { lines.push(cur); cur = ""; }
+      if (ctx.measureText(w).width <= maxW) { cur = w; continue; }
+      // A long word must wrap too; keep combining characters and emoji together.
+      const chars = typeof Intl.Segmenter === "function"
+        ? Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(w), part => part.segment)
+        : Array.from(w);
+      for (const ch of chars) {
+        if (cur && ctx.measureText(cur + ch).width > maxW) { lines.push(cur); cur = ""; }
+        cur += ch;
+      }
     }
     if (cur) lines.push(cur);
     return lines;
+  }
+  function quoteLines(text, maxW, start) {
+    // Fit the complete quote in the existing two-line area without dropping text.
+    for (let size = start; size >= 1; size--) {
+      const lines = wrapLines("“" + text + "”", maxW, `400 ${size}px ${FONT}`);
+      if (lines.length <= 2 && lines.every(line => ctx.measureText(line).width <= maxW)) return lines;
+    }
+    return [];
   }
   function spaced(text, x, y, spacing, align) {
     // letter-spaced text for small caps lines
@@ -297,17 +316,22 @@ footer { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--li
   function trackedWidth(text, spacing) {
     let w = 0; for (const ch of text) w += ctx.measureText(ch).width + spacing; return w - spacing;
   }
-  function pill(text, x, y, fill, color) {
+  function pill(text, x, y, maxW, color) {
     // y = top of pill
     ctx.font = `600 24px ${FONT}`;
-    const w = trackedWidth(text, 3) + 44, h = 48;
+    const scale = Math.min(1, (maxW - 44) / trackedWidth(text, 3));
+    const spacing = 3 * scale;
+    ctx.font = `600 ${24 * scale}px ${FONT}`;
+    const w = Math.min(maxW, trackedWidth(text, spacing) + 44), h = 48;
     rrect(x, y, w, h, h / 2); ctx.fillStyle = gradFill(x, 0, x + w, 0, true); ctx.fill();
-    ctx.fillStyle = color; tracked(text, x + 22, y + 32, 3);
+    const metrics = ctx.measureText(text);
+    ctx.fillStyle = color;
+    tracked(text, x + 22, y + (h + metrics.actualBoundingBoxAscent - metrics.actualBoundingBoxDescent) / 2, spacing);
     return h;
   }
-  function fitName(name, maxW, start, min) {
+  function fitName(name, maxW, start) {
     let size = start; ctx.font = `700 ${size}px ${FONT}`;
-    while (ctx.measureText(name).width > maxW && size > min) { size -= 2; ctx.font = `700 ${size}px ${FONT}`; }
+    while (ctx.measureText(name).width > maxW && size > 1) { size--; ctx.font = `700 ${size}px ${FONT}`; }
     return size;
   }
   function texts() {
@@ -343,16 +367,16 @@ footer { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--li
     y -= 66;
     if (t.line) {
       ctx.font = `400 32px ${FONT}`; ctx.fillStyle = "rgba(255,255,255,.88)";
-      const ls = wrapLines("“" + t.line + "”", W - 2 * M, ctx.font).slice(0, 2);
+      const ls = quoteLines(t.line, W - 2 * M, 32);
       for (let i = ls.length - 1; i >= 0; i--) { ctx.fillText(ls[i], M, y); y -= 44; }
       y -= 22;
     }
     ctx.font = `500 36px ${FONT}`; ctx.fillStyle = "rgba(255,255,255,.9)"; ctx.fillText(t.voice, M, y);
     y -= 58;
-    const size = fitName(t.name, W - 2 * M, 104, 56);
+    const size = fitName(t.name, W - 2 * M, 104);
     ctx.fillStyle = "#fff"; ctx.font = `700 ${size}px ${FONT}`; ctx.fillText(t.name, M, y);
     y -= size + 30;
-    pill(t.kicker, M, y - 48 + 10, "grad", "#fff");
+    pill(t.kicker, M, y - 48 + 10, W - 2 * M, "#fff");
   }
 
   function drawGradient(W, H, story) {
@@ -361,15 +385,15 @@ footer { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--li
     const top = story ? 190 : M, ph = story ? 1000 : 800;
     photo(M, top, W - 2 * M, ph, 40);
     let y = top + ph + 44;
-    pill(t.kicker, M, y, "grad", "#fff");
+    pill(t.kicker, M, y, W - 2 * M, "#fff");
     y += 48 + (story ? 92 : 86);
-    const size = fitName(t.name, W - 2 * M, 92, 52);
+    const size = fitName(t.name, W - 2 * M, 92);
     ctx.fillStyle = "#fff"; ctx.font = `700 ${size}px ${FONT}`; ctx.fillText(t.name, M, y);
     y += 56;
     ctx.font = `500 36px ${FONT}`; ctx.fillStyle = "rgba(255,255,255,.92)"; ctx.fillText(t.voice, M, y);
     if (t.line) {
       y += 54; ctx.font = `400 30px ${FONT}`; ctx.fillStyle = "rgba(255,255,255,.85)";
-      wrapLines("“" + t.line + "”", W - 2 * M, ctx.font).slice(0, 2).forEach((ln, i) => ctx.fillText(ln, M, y + i * 42));
+      quoteLines(t.line, W - 2 * M, 30).forEach((ln, i) => ctx.fillText(ln, M, y + i * 42));
     }
     const fy = H - (story ? 290 : 60);
     ctx.font = `500 22px ${FONT}`; ctx.fillStyle = "rgba(255,255,255,.8)"; tracked(t.foot, M, fy, 3);
@@ -383,15 +407,15 @@ footer { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--li
     photo(M, top, W - 2 * M, ph, 40);
     // pill overlapping the photo's bottom edge
     ctx.font = `600 24px ${FONT}`;
-    pill(t.kicker, M + 32, top + ph - 24, "grad", "#fff");
+    pill(t.kicker, M + 32, top + ph - 24, W - 2 * M - 32, "#fff");
     let y = top + ph + (story ? 140 : 118);
-    const size = fitName(t.name, W - 2 * M, 96, 52);
+    const size = fitName(t.name, W - 2 * M, 96);
     ctx.font = `700 ${size}px ${FONT}`; ctx.fillStyle = gradFill(M, 0, M + Math.min(W - 2 * M, ctx.measureText(t.name).width), 0);
     ctx.fillText(t.name, M, y);
     y += 56; ctx.font = `500 36px ${FONT}`; ctx.fillStyle = C.ink; ctx.fillText(t.voice, M, y);
     if (t.line) {
       y += 54; ctx.font = `400 30px ${FONT}`; ctx.fillStyle = C.grey;
-      wrapLines("“" + t.line + "”", W - 2 * M, ctx.font).slice(0, 2).forEach((ln, i) => ctx.fillText(ln, M, y + i * 42));
+      quoteLines(t.line, W - 2 * M, 30).forEach((ln, i) => ctx.fillText(ln, M, y + i * 42));
     }
     const fy = H - (story ? 290 : 60);
     ctx.fillStyle = C.line; ctx.fillRect(M, fy - 60, W - 2 * M, 2);
@@ -402,6 +426,8 @@ footer { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--li
   function draw() {
     const [W, H] = SIZES[state.format];
     if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = "#2a2833"; ctx.fillRect(0, 0, W, H);
     ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
     const story = state.format === "story";
     ({ editorial: drawEditorial, gradient: drawGradient, clean: drawClean })[state.design](W, H, story);
@@ -409,10 +435,18 @@ footer { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--li
   }
 
   // keep a ready JPEG so Share can open the share menu straight from the tap
-  let blobTimer = null, readyBlob = null;
+  let blobTimer = null, readyBlob = null, renderVersion = 0;
+  let photoSelection = 0, cancelPhotoLoad = null, photoLoading = false;
+  function invalidateBlob() {
+    readyBlob = null; clearTimeout(blobTimer); renderVersion++;
+  }
   function scheduleBlob() {
-    readyBlob = null; clearTimeout(blobTimer);
-    blobTimer = setTimeout(() => canvas.toBlob(b => { readyBlob = b; }, "image/jpeg", 0.92), 600);
+    invalidateBlob();
+    if (photoLoading) return;
+    const version = renderVersion;
+    blobTimer = setTimeout(() => canvas.toBlob(b => {
+      if (version === renderVersion && !photoLoading) readyBlob = b;
+    }, "image/jpeg", 0.92), 600);
   }
 
   function buildCaption() {
@@ -426,6 +460,8 @@ footer { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--li
   }
   let refreshPending = false;
   function refresh() {
+    // Invalidate at input time, before the next animation frame draws the change.
+    invalidateBlob();
     if (refreshPending) return;
     refreshPending = true;
     requestAnimationFrame(() => { refreshPending = false; refreshNow(); });
@@ -438,13 +474,16 @@ footer { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--li
   }
 
   // inputs
-  ["name", "withWho", "line"].forEach(id => $(id).addEventListener("input", () => { state.captionEdited = false; refresh(); }));
-  $("voice").addEventListener("change", () => { state.captionEdited = false; refresh(); });
-  $("caption").addEventListener("input", () => { state.captionEdited = true; });
-  document.querySelectorAll('input[name=moment]').forEach(r => r.addEventListener("change", e => { state.moment = e.target.value; state.captionEdited = false; refresh(); }));
+  ["name", "withWho", "line"].forEach(id => $(id).addEventListener("input", refresh));
+  $("voice").addEventListener("change", refresh);
+  $("caption").addEventListener("input", () => { state.captionEdited = true; $("resetCaptionBtn").hidden = false; });
+  $("resetCaptionBtn").addEventListener("click", () => {
+    state.captionEdited = false; $("caption").value = buildCaption(); $("resetCaptionBtn").hidden = true;
+  });
+  document.querySelectorAll('input[name=moment]').forEach(r => r.addEventListener("change", e => { state.moment = e.target.value; refresh(); }));
   document.querySelectorAll('input[name=design]').forEach(r => { r.checked = r.value === state.design; r.addEventListener("change", e => { state.design = e.target.value; refresh(); }); });
   document.querySelectorAll('input[name=format]').forEach(r => r.addEventListener("change", e => { state.format = e.target.value; resetPos(); refresh(); }));
-  document.querySelectorAll('input[name=lang]').forEach(r => r.addEventListener("change", e => { state.lang = e.target.value; state.captionEdited = false; refresh(); }));
+  document.querySelectorAll('input[name=lang]').forEach(r => r.addEventListener("change", e => { state.lang = e.target.value; refresh(); }));
   $("zoom").addEventListener("input", e => { state.zoom = parseFloat(e.target.value); refresh(); });
   function resetPos() { state.px = 0; state.py = 0; $("posX").value = 0; $("posY").value = 0; }
   $("posX").addEventListener("input", e => { state.px = parseFloat(e.target.value); refresh(); });
@@ -452,19 +491,46 @@ footer { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--li
 
   $("photo").addEventListener("change", e => {
     const f = e.target.files && e.target.files[0]; if (!f) return;
+    const selection = ++photoSelection;
+    if (cancelPhotoLoad) cancelPhotoLoad();
+    photoLoading = true; invalidateBlob();
+    $("status").textContent = "Loading your photo…";
+    $("saveImg").style.display = "none";
     const url = URL.createObjectURL(f); const im = new Image();
-    im.onload = () => {
-      const MAX = 2000, sc = Math.min(1, MAX / Math.max(im.naturalWidth, im.naturalHeight));
-      let src = im;
-      if (sc < 1) {
-        const c = document.createElement("canvas");
-        c.width = Math.round(im.naturalWidth * sc); c.height = Math.round(im.naturalHeight * sc);
-        c.getContext("2d").drawImage(im, 0, 0, c.width, c.height);
-        src = c; URL.revokeObjectURL(url);
-      }
-      state.img = src; resetPos(); state.zoom = 1; $("zoom").value = 1; $("photoLabel").textContent = "Change photo"; refresh();
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true; URL.revokeObjectURL(url); im.onload = null; im.onerror = null;
+      if (selection === photoSelection) cancelPhotoLoad = null;
     };
-    im.onerror = () => { $("status").textContent = "That file could not be opened. Please choose a JPG or PNG photo."; };
+    cancelPhotoLoad = () => { release(); im.src = ""; };
+    const failed = () => {
+      if (selection !== photoSelection) return;
+      photoLoading = false;
+      $("status").textContent = "That file could not be opened. Please choose a JPG or PNG photo.";
+      refresh();
+    };
+    im.onload = () => {
+      try {
+        if (selection !== photoSelection) return;
+        if (!im.naturalWidth || !im.naturalHeight) throw new Error("Empty image");
+        const MAX = 2000, sc = Math.min(1, MAX / Math.max(im.naturalWidth, im.naturalHeight));
+        let src = im;
+        if (sc < 1) {
+          const c = document.createElement("canvas");
+          c.width = Math.max(1, Math.round(im.naturalWidth * sc)); c.height = Math.max(1, Math.round(im.naturalHeight * sc));
+          c.getContext("2d").drawImage(im, 0, 0, c.width, c.height);
+          src = c;
+        }
+        state.img = src; photoLoading = false; resetPos(); state.zoom = 1; $("zoom").value = 1;
+        $("photoLabel").textContent = "Change photo"; $("status").textContent = ""; refresh();
+      } catch {
+        failed();
+      } finally {
+        release();
+      }
+    };
+    im.onerror = () => { failed(); release(); };
     im.src = url;
   });
 
@@ -495,6 +561,7 @@ footer { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--li
 
   // save image: download the JPEG, and show it for press-and-hold saving
   $("saveBtn").addEventListener("click", () => {
+    if (photoLoading) { $("status").textContent = "Your new photo is still loading. Please try again in a moment."; return; }
     draw();
     const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
     $("finalImg").src = dataUrl; $("saveImg").style.display = "flex";
@@ -513,7 +580,7 @@ footer { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--li
   })();
   if (canShareFiles) { $("shareBtn").hidden = false; $("shareHint").hidden = false; }
   $("shareBtn").addEventListener("click", async () => {
-    if (!readyBlob) { $("status").textContent = "One moment, the picture is still being prepared. Tap again."; return; }
+    if (photoLoading || refreshPending || !readyBlob) { $("status").textContent = "One moment, the picture is still being prepared. Tap again."; return; }
     const file = new File([readyBlob], fileName(), { type: "image/jpeg" });
     navigator.clipboard && navigator.clipboard.writeText($("caption").value).catch(() => {});
     try {
